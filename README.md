@@ -189,6 +189,11 @@ rssidian ingest
 # Process articles from last 30 days with debug output
 rssidian ingest --lookback 30 --debug
 
+# See how often each article link was actually delivered in written digests
+rssidian deliveries                              # Delivery count per article link
+rssidian deliveries --url <article_url>          # Which digest files delivered a link
+rssidian deliveries --article-id <id>            # Same lookup by article ID
+
 # Search through article content using natural language (default relevance)
 rssidian search "impact of blockchain on cybersecurity"
 
@@ -202,6 +207,22 @@ rssidian search "blockchain" --refresh
 rssidian mcp --port 8080                # Start in HTTP mode on port 8080
 rssidian mcp --stdio                   # Start in STDIO mode for Claude Desktop integration
 ```
+
+## Delivery Tracking
+
+Every time a digest markdown file is actually written to your Obsidian vault, RSSidian records the delivery in a publish index (the `digests` and `digest_articles` tables). The index links each real output file to the selected article IDs and their article URLs, so you can answer "how many times was this link actually delivered to my vault?":
+
+```bash
+rssidian deliveries                   # Per-link delivery counts
+rssidian deliveries --url <URL>       # The digest files that delivered a link
+rssidian deliveries --article-id <ID> # Same, by article ID
+```
+
+Properties of the index:
+
+- **Only real writes count**: a digest that is generated but never written to disk is not a publication and is not recorded
+- **Stable identifiers**: deliveries are keyed by article ID and article URL, never by subscription feed URL, so the original digest stays locatable even after a subscription's URL changes
+- **Per-digest counting**: a link appearing multiple times in one digest counts as a single delivery
 
 ## Database Backup
 

@@ -4,6 +4,8 @@ from typing import Dict, Any, Optional
 from datetime import datetime
 import logging
 
+from sqlalchemy.orm import Session
+
 from .config import Config
 
 # Configure logging
@@ -33,14 +35,25 @@ def sanitize_filename(filename: str) -> str:
     return filename
 
 
-def write_digest_to_obsidian(digest: Dict[str, Any], config: Config) -> Optional[str]:
+def write_digest_to_obsidian(
+    digest: Dict[str, Any],
+    config: Config,
+    db_session: Optional[Session] = None,
+) -> Optional[str]:
     """
     Write a digest to Obsidian as markdown.
-    
+
+    After the file is actually written, the delivery is recorded in the
+    publish index (selected article IDs + article URLs linked to the real
+    output file). A digest that is only generated but never written out is
+    not recorded as published.
+
     Args:
         digest: Digest content
         config: Configuration
-        
+        db_session: Optional database session for recording the delivery.
+            If omitted, a session is opened from the configured database.
+
     Returns:
         Path to the created markdown file or None if failed
     """
@@ -105,7 +118,25 @@ def write_digest_to_obsidian(digest: Dict[str, Any], config: Config) -> Optional
         with open(file_path, "w", encoding="utf-8") as f:
             f.write(content)
         logger.info(f"Wrote digest to {file_path}")
-        return file_path
     except Exception as e:
         logger.error(f"Failed to write digest to {file_path}: {str(e)}")
         return None
+
+    # Record the delivery only now that the file really exists. A recording
+    # failure must not turn a successful write into a failure.
+    try:
+        from .publish import record_digest_delivery
+
+        own_session = db_session is None
+        if own_session:
+            from .models import get_db_session
+            db_session = get_db_session(config.db_path)
+        try:
+            record_digest_delivery(digest, file_path, db_session)
+        finally:
+            if own_session:
+                db_session.close()
+    except Exception as e:
+        logger.error(f"Failed to record digest delivery for {file_path}: {str(e)}")
+
+    return file_path

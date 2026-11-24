@@ -624,8 +624,8 @@ def ingest(ctx, lookback, debug):
         lookback_period = lookback or config.default_lookback
         digest = processor.generate_digest(lookback_days=lookback_period)
         
-        # Step 4: Write digest to Obsidian
-        file_path = write_digest_to_obsidian(digest, config)
+        # Step 4: Write digest to Obsidian (records the delivery in the publish index)
+        file_path = write_digest_to_obsidian(digest, config, db_session=db_session)
         if file_path:
             click.echo(f"Wrote digest to {file_path}")
         else:
@@ -780,6 +780,102 @@ def search(ctx, query, relevance, refresh):
     
     except Exception as e:
         console.print(f"[bold red]Error during search:[/bold red] {str(e)}")
+    finally:
+        db_session.close()
+
+
+@cli.command()
+@click.option("--url", help="Show which digests delivered a specific article URL")
+@click.option("--article-id", type=int, help="Show which digests delivered a specific article ID")
+@click.pass_context
+def deliveries(ctx, url, article_id):
+    """Show how often each article link was actually delivered in written digests.
+
+    Only digests that were really written to the Obsidian vault count as
+    deliveries. Lookup by article ID or article URL keeps working even after
+    a subscription's feed URL changes.
+    """
+    config = ctx.obj["config"]
+    db_session = ensure_db_exists(config)
+
+    # Import here to avoid loading at startup
+    from .publish import get_article_deliveries, get_delivery_counts
+
+    try:
+        if url or article_id is not None:
+            # Detail view: every digest that delivered this article
+            entries = get_article_deliveries(db_session, article_id=article_id, url=url)
+
+            if not entries:
+                console.print("[yellow]No deliveries found for the given article.[/yellow]")
+                return
+
+            console.print(Panel.fit(
+                f"[bold green]{len(entries)} "
+                f"deliver{'ies' if len(entries) != 1 else 'y'} found[/bold green]",
+                border_style="green"
+            ))
+
+            detail_table = Table(show_header=True, header_style="bold magenta", box=box.ROUNDED)
+            detail_table.add_column("Delivered At", width=19)
+            detail_table.add_column("Digest File")
+            detail_table.add_column("Date Range", width=24)
+            detail_table.add_column("Output File", style="dim")
+
+            for entry in entries:
+                if entry["delivered_at"]:
+                    delivered_at = entry["delivered_at"].strftime("%Y-%m-%d %H:%M:%S")
+                else:
+                    delivered_at = "Unknown"
+                date_range = ""
+                if entry["from_date"] and entry["to_date"]:
+                    date_range = f"{entry['from_date']} → {entry['to_date']}"
+                detail_table.add_row(
+                    delivered_at,
+                    entry["filename"],
+                    date_range,
+                    entry["file_path"],
+                )
+
+            console.print(detail_table)
+        else:
+            # Overview: delivery count per article link
+            counts = get_delivery_counts(db_session)
+
+            if not counts:
+                console.print("[yellow]No digests have been published yet.[/yellow]")
+                return
+
+            console.print(f"[bold green]Article links delivered:[/bold green] {len(counts)}\n")
+
+            table = Table(show_header=True, header_style="bold magenta", box=box.ROUNDED)
+            table.add_column("Article", no_wrap=False)
+            table.add_column("Delivered", justify="right", width=9)
+            table.add_column("Last Delivery", width=12)
+            table.add_column("Article URL", style="dim", no_wrap=False)
+
+            for row in counts:
+                title = row["title"] or "(article no longer in database)"
+                if len(title) > 50:
+                    title = title[:47] + "..."
+                if row["last_delivered_at"]:
+                    last_delivered = row["last_delivered_at"].strftime("%Y-%m-%d")
+                else:
+                    last_delivered = "Unknown"
+                count = row["delivery_count"]
+                count_display = f"[bold]{count}[/bold]" if count > 1 else str(count)
+                table.add_row(
+                    title,
+                    count_display,
+                    last_delivered,
+                    row["article_url"],
+                )
+
+            console.print(table)
+            console.print(
+                "\n[dim]Use 'rssidian deliveries --url <URL>' or '--article-id <ID>' "
+                "to see which digest files delivered a link.[/dim]"
+            )
     finally:
         db_session.close()
 

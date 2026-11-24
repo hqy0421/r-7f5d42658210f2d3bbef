@@ -70,6 +70,52 @@ class Article(Base):
         return f"<Article(id={self.id}, title='{self.title[:30]}...', quality_tier='{self.quality_tier or 'None'}')>"
 
 
+class Digest(Base):
+    """Record of a digest that was actually written to the Obsidian vault.
+
+    A row only exists if the markdown file was really written to disk; a
+    digest that was generated but never written out is not a publication.
+    """
+    __tablename__ = "digests"
+
+    id = Column(Integer, primary_key=True)
+    filename = Column(String(512), nullable=False)  # Obsidian note filename
+    file_path = Column(String(1024), nullable=False)  # Real output file path
+    from_date = Column(String(10), nullable=True)  # Coverage start (YYYY-MM-DD)
+    to_date = Column(String(10), nullable=True)  # Coverage end (YYYY-MM-DD)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Relationships
+    deliveries = relationship(
+        "DigestArticle", back_populates="digest", cascade="all, delete-orphan"
+    )
+
+    def __repr__(self) -> str:
+        return f"<Digest(id={self.id}, filename='{self.filename}', created_at={self.created_at})>"
+
+
+class DigestArticle(Base):
+    """Association between a published digest and an article link delivered in it.
+
+    Keyed by the stable article ID and the article's own URL (正文链接), never
+    by the subscription feed URL, so the original digest stays locatable even
+    after a subscription's URL changes.
+    """
+    __tablename__ = "digest_articles"
+
+    id = Column(Integer, primary_key=True)
+    digest_id = Column(Integer, ForeignKey("digests.id"), nullable=False)
+    article_id = Column(Integer, ForeignKey("articles.id"), nullable=False)
+    article_url = Column(String(512), nullable=False)  # Article link at publish time
+
+    # Relationships
+    digest = relationship("Digest", back_populates="deliveries")
+    article = relationship("Article")
+
+    def __repr__(self) -> str:
+        return f"<DigestArticle(digest_id={self.digest_id}, article_id={self.article_id})>"
+
+
 def init_db(db_path: str) -> Session:
     """Initialize database and return session."""
     engine = create_engine(f"sqlite:///{db_path}")
